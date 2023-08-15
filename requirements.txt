@@ -1,0 +1,6 @@
+pandas
+numpy
+tensorflow
+tensorflow-recommenders
+tqdm
+pyarrow
