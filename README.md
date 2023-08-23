@@ -39,7 +39,7 @@ Content-Type: application/json
 
 {
   "instances": [
-    "User_id"
+    "user_id"
   ]
 }
 ```
@@ -68,7 +68,7 @@ Content-Type: application/json
 
 {
   "instances": [
-    "User_id",
+    "user_id",
     "product",
     "PRECIO",
     "sin_weekday",
@@ -95,11 +95,11 @@ Donde -u es el id del usuario y -p es el nombre de los productos a rankear.
 Los modelos reciben como entrada datasets en formato .parquet. Estos datasets deben tener las siguientes columnas:
 
 **Retrieval:**
-- id (str): id del producto
+- user_id (str): id del usuario
 - product (str): nombre del producto
 
 **Ranking:**
-- id (str): id del producto
+- user_id (str): id del usuario
 - product (str): nombre del producto
 - PRECIO (int): precio del producto
 - sin_weekday (float): seno del día de la semana
@@ -110,6 +110,22 @@ Los modelos reciben como entrada datasets en formato .parquet. Estos datasets de
 - cos_month (float): coseno del mes
 - sin_hour (float): seno de la hora
 - cos_hour (float): coseno de la hora
+
+## Preprocesamiento del dataset
+Si no se cuenta con el dataset en el formato especificado, se puede ejecutar el archivo data_prep.py que recibe un dataset en formato .csv y lo convierte a formato .parquet, generando las columnas necesarias para el entrenamiento de los modelos, este dataset.csv tiene que tener las siguientes columnas:
+
+- user_id (str): id del usuario
+- product (str): nombre del producto
+- PRECIO (int): precio del producto
+- Fecha (Datetime): fecha del pedido (YYYY-MM-DD HH:MM:SS)
+
+Para realizar el preprocesamiento se debe ejecutar el siguiente comando:
+
+```bash
+python data_prep.py --d path/to/dataset.csv
+```
+
+Y se generaran los datasets en formato .parquet en la carpeta datasets.
 
 ## Resultados
 Los resultados de los modelos se guardan en la carpeta logs, estos resultados pueden ser analizados con TensorBoard, que por defecto corre en el puerto local :6006.
