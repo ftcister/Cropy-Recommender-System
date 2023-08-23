@@ -16,6 +16,7 @@ for gpu in gpus:
 num_cores = len(gpus)
 selected_device = "/GPU:0"
 
+
 class Bucketizer(tf.keras.layers.Layer):
     """Embedding layer based on bucketing a continuous variable."""
 
@@ -434,5 +435,7 @@ history = model.fit(
 path_ranking = "models/ranking/ranking_" + df_name.split("/")[1].split(".")[0] + "/1"
 
 tf.saved_model.save(
-    model, path_ranking, options=tf.saved_model.SaveOptions(namespace_whitelist=["Ranking"])
+    model,
+    path_ranking,
+    options=tf.saved_model.SaveOptions(namespace_whitelist=["Ranking"]),
 )
