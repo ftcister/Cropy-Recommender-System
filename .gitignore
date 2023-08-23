@@ -1,2 +1,7 @@
-datasets/
-logs/
+datasets/ranking/*
+datasets/retrieval/*
+logs/ranking/scarlars/*
+logs/retrieval/scarlars/*
+models/ranking/*
+models/scann/*
+utils/*

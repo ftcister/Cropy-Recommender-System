@@ -7,15 +7,14 @@ from datetime import datetime
 from sklearn.model_selection import train_test_split
 from typing import List
 from tensorflow.python.ops.math_ops import _bucketize as bucketize
-#import shutil
+import shutil
 import argparse
 
-import time
-
-device = tf.config.experimental.list_physical_devices("GPU")
-for gpu in device: tf.config.experimental.set_memory_growth(gpu, True)
-num_cores = len(device)
-selected_device = '/GPU:0'
+gpus = tf.config.experimental.list_physical_devices("GPU")
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
+num_cores = len(gpus)
+selected_device = "/GPU:0"
 
 class Bucketizer(tf.keras.layers.Layer):
     """Embedding layer based on bucketing a continuous variable."""
@@ -33,6 +32,7 @@ class Bucketizer(tf.keras.layers.Layer):
 
     def call(self, x: tf.Tensor) -> tf.Tensor:
         return bucketize(x, boundaries=self.buckets)
+
 
 class DCN(tfrs.Model):
     def __init__(
@@ -121,7 +121,11 @@ class DCN(tfrs.Model):
 
         self.task = tfrs.tasks.Ranking(
             loss=tf.keras.losses.MeanSquaredError(),
-            metrics=[tf.keras.metrics.RootMeanSquaredError("RMSE")],
+            metrics=[
+                tf.keras.metrics.MeanSquaredError("MSE"),
+                tf.keras.metrics.RootMeanSquaredError("RMSE"),
+                tf.keras.metrics.MeanAbsoluteError("MAE"),
+            ],
         )
 
     def call(self, features):
@@ -152,25 +156,46 @@ class DCN(tfrs.Model):
             predictions=scores,
         )
 
+
 SEED = 42
-tf.random.set_seed(SEED)
+tf.keras.utils.set_random_seed(SEED)
 
-#shutil.rmtree('logs/ranking', ignore_errors=True)
-
-parser = argparse.ArgumentParser(description='Train Recommender Model.')
-parser.add_argument('-d', '--dataset', required=True,metavar='dataset_name', type=str, help='the name of the dataset')
-parser.add_argument('-e', '--epochs', required=True,metavar='epochs', type=int, help='the number of epochs')
+parser = argparse.ArgumentParser(description="Train Recommender Model.")
+parser.add_argument(
+    "-d",
+    "--dataset",
+    required=True,
+    metavar="dataset_name",
+    type=str,
+    help="the name of the dataset",
+)
+parser.add_argument(
+    "-e",
+    "--epochs",
+    required=True,
+    metavar="epochs",
+    type=int,
+    help="the number of epochs",
+)
+parser.add_argument(
+    "-r",
+    "--remove",
+    default=False,
+    metavar="remove_logs",
+    action=argparse.BooleanOptionalAction,
+    help="clear the logs folder",
+)
 
 args = parser.parse_args()
 df_name = args.dataset
 
-print("Loading data...")
+if args.remove:
+    shutil.rmtree("logs/retrieval", ignore_errors=True)
+
 df_final_retrieval = pd.read_parquet(df_name, engine="pyarrow")
 df_final_retrieval = df_final_retrieval.groupby("product").filter(
     lambda x: (x["product"].count() >= 2).any()
 )
-
-#df_final_retrieval.drop(["ranking_v2", "ranking_v3"], axis=1, inplace=True)
 
 tf_dict_df = tf.data.Dataset.from_tensor_slices(dict(df_final_retrieval))
 
@@ -192,8 +217,8 @@ beer_ratings = tf_dict_df.map(
     }
 )
 
-products_dataset = beer_ratings.map(lambda x: x['product'])
-usernames = beer_ratings.map(lambda x: x['user_id'])
+products_dataset = beer_ratings.map(lambda x: x["product"])
+usernames = beer_ratings.map(lambda x: x["user_id"])
 
 unique_products = np.unique(np.concatenate(list(products_dataset.batch(1000))))
 unique_user_ids = np.unique(np.concatenate(list(usernames.batch(1000))))
@@ -212,29 +237,17 @@ feature_names = [
     "cos_hour",
 ]
 
-# come up with vocab lists for string variables (doesn't really handle review text now)
-# floats will automatically get converted to integers
-""" 
-for feature_name in feature_names:
-    vocab = beer_ratings.batch(1000000).map(lambda x: x[feature_name])
-    vocabularies[feature_name] = np.unique(np.concatenate(list(vocab)))
-
-for feature_name in feature_names:
-    vocab = beer_ratings.map(lambda x: x[feature_name])
-    vocabularies[feature_name] = np.unique(np.concatenate(list(vocab.batch(1000000))))
-"""
 
 def get_vocab(feature_name, dataset):
-    return np.unique(np.concatenate(list(dataset.map(lambda x: x[feature_name]).batch(1000000))))
+    return np.unique(
+        np.concatenate(list(dataset.map(lambda x: x[feature_name]).batch(1000000)))
+    )
+
 
 with tf.device(selected_device):
-    print('Creating vocabularies on device: ', selected_device)
     vocabularies = {}
     for feature_name in feature_names:
         vocabularies[feature_name] = get_vocab(feature_name, beer_ratings)
-
-
-print('Vocabularies created')
 
 str_features = ["user_id", "product"]
 int_features = ["PRECIO"]
@@ -303,17 +316,19 @@ val_dataset = interaction_dataset_val.shuffle(
 train_size = len(df_train)
 val_size = len(df_val)
 
+
 def optimal_n_params(dimension, n_features, train_size, hidden_dim):
-  input_tensor = dimension*n_features
-  dcn = (input_tensor*input_tensor)+input_tensor
-  output_tensor = 1
-  max_params = train_size/10
-  first_layer_params = input_tensor*hidden_dim + hidden_dim
-  hidden_layer_params = hidden_dim*hidden_dim + hidden_dim
-  final_layer_params = hidden_dim*output_tensor + output_tensor
-  free_params = max_params - final_layer_params - first_layer_params - dcn
-  n_layers = round(free_params/hidden_layer_params)
-  return [hidden_dim]*n_layers
+    input_tensor = dimension * n_features
+    dcn = (input_tensor * input_tensor) + input_tensor
+    output_tensor = 1
+    max_params = train_size / 10
+    first_layer_params = input_tensor * hidden_dim + hidden_dim
+    hidden_layer_params = hidden_dim * hidden_dim + hidden_dim
+    final_layer_params = hidden_dim * output_tensor + output_tensor
+    free_params = max_params - final_layer_params - first_layer_params - dcn
+    n_layers = round(free_params / hidden_layer_params)
+    return [hidden_dim] * n_layers
+
 
 def num_params(dimension, n_features, layer_size, layer_num):
     dim = dimension * n_features
@@ -323,8 +338,9 @@ def num_params(dimension, n_features, layer_size, layer_num):
     outuput = layer_size + 1
     return dcn + first_hidden + deep * (layer_num - 1) + outuput
 
-d_model = int(max(len(unique_user_ids),len(unique_products))**.25)
-layer_sizes = optimal_n_params(d_model, len(feature_names), train_size, d_model*2)
+
+d_model = int(max(len(unique_user_ids), len(unique_products)) ** 0.25)
+layer_sizes = optimal_n_params(d_model, len(feature_names), train_size, d_model * 2)
 deep_layer_sizes = layer_sizes
 use_cross_layer = True
 projection_dim = None
@@ -334,13 +350,8 @@ freq = 1
 epochs = args.epochs
 patience = 50
 
-# lr = CustomSchedule(d_model, warm_up_steps)
-#lr_list = [1e-2,5e-2,1e-3,5e-3,1e-4,5e-4,1e-5,5e-5]
-lr = 1e-4
-
-#opt = tf.keras.optimizers.Adam(learning_rate=lr)
-opt = tf.keras.optimizers.legacy.Adam(learning_rate=lr) #legacy for m1 mac
-
+lr = 1e-3
+opt = tf.keras.optimizers.AdamW(amsgrad=True, learning_rate=lr)
 
 model = DCN(
     use_cross_layer,
@@ -355,17 +366,33 @@ model = DCN(
 
 model.compile(optimizer=opt)
 
-print('Compiling model...')
-
 time_now = datetime.now().strftime("%Y%m%d-%H%M%S")
 logdir = "logs/ranking/scalars/" + time_now
-#checkpoint_filepath = ("models/ranking/checkpoints/" + df_name.split("/")[1].split(".")[0] + "/1/")
+checkpoint_filepath = (
+    "models/ranking/checkpoints/" + df_name.split("/")[1].split(".")[0] + "/1/"
+)
 
 my_callbacks = [
-    tf.keras.callbacks.TensorBoard(log_dir=logdir, histogram_freq=1, profile_batch="500,520"),
+    tf.keras.callbacks.TensorBoard(
+        log_dir=logdir, histogram_freq=1, profile_batch="500,520"
+    ),
     TqdmCallback(verbose=1),
-    #tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_filepath,monitor="val_total_loss",save_best_only=True,mode="min",verbose=0,save_weights_only=True),
-    tf.keras.callbacks.EarlyStopping(monitor="val_total_loss",restore_best_weights=True,min_delta=0,patience=patience,mode="min",start_from_epoch=0),
+    tf.keras.callbacks.ModelCheckpoint(
+        filepath=checkpoint_filepath,
+        monitor="val_total_loss",
+        save_best_only=True,
+        mode="min",
+        verbose=0,
+        save_weights_only=True,
+    ),
+    tf.keras.callbacks.EarlyStopping(
+        monitor="val_total_loss",
+        restore_best_weights=True,
+        min_delta=0,
+        patience=patience,
+        mode="min",
+        start_from_epoch=0,
+    ),
 ]
 
 print("\n----------------------------------------")
@@ -377,7 +404,10 @@ print("----------------------------------------")
 print("embedding dimension:", d_model)
 print("number of layers:", len(deep_layer_sizes))
 print("Neurons per layer:", deep_layer_sizes[0])
-print("Trainable parameters:",num_params(d_model, len(feature_names), d_model * 2, len(deep_layer_sizes)))
+print(
+    "Trainable parameters:",
+    num_params(d_model, len(feature_names), d_model * 2, len(deep_layer_sizes)),
+)
 print("----------------------------------------")
 print("epochs:", epochs)
 print("batch size:", batch_size)
@@ -401,22 +431,8 @@ history = model.fit(
     workers=16,
 )
 
-"""
-test_ratings = {}
-test_movie_titles = ["M*A*S*H (1970)", "Dances with Wolves (1990)", "Speed (1994)"]
-for movie_title in test_movie_titles:
-  test_ratings[movie_title] = model({
-      "user_id": np.array(["42"]),
-      "movie_title": np.array([movie_title])
-  })
+path_ranking = "models/ranking/ranking_" + df_name.split("/")[1].split(".")[0] + "/1"
 
-print("Ratings:")
-for title, score in sorted(test_ratings.items(), key=lambda x: x[1], reverse=True):
-  print(f"{title}: {score}")
-
-tf.saved_model.save(model, "export")
-
-loaded = tf.saved_model.load("export")
-
-loaded({"user_id": np.array(["42"]), "movie_title": ["Speed (1994)"]}).numpy()
-"""
+tf.saved_model.save(
+    model, path_ranking, options=tf.saved_model.SaveOptions(namespace_whitelist=["Ranking"])
+)

@@ -4,3 +4,5 @@ tensorflow
 tensorflow-recommenders
 tqdm
 pyarrow
+scikit-learn
+scann
